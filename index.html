@@ -18,7 +18,11 @@
             --font-mono: 'Space Mono', monospace;
         }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; cursor: crosshair; }
+        * { 
+            margin: 0; padding: 0; box-sizing: border-box; cursor: crosshair; 
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
         
         body, html {
             width: 100vw; height: 100vh;
@@ -62,6 +66,7 @@
         }
 
         .hud-top span { opacity: 0.6; }
+        #tier-text { color: var(--neon-cyan); font-weight: 700; opacity: 1; }
 
         /* Velocity/Alarm Meter */
         .meter-container {
@@ -94,7 +99,7 @@
         .overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
 
         h1 {
-            font-size: clamp(3rem, 8vw, 6rem);
+            font-size: clamp(2.5rem, 8vw, 6rem);
             font-weight: 700; letter-spacing: -0.04em;
             line-height: 1; margin-bottom: 1.5rem;
             text-transform: uppercase;
@@ -102,7 +107,7 @@
         p {
             font-family: var(--font-mono); font-size: 0.9rem;
             opacity: 0.7; max-width: 500px; line-height: 1.6;
-            margin-bottom: 3rem; letter-spacing: 0.05em;
+            margin-bottom: 3rem; letter-spacing: 0.05em; padding: 0 1rem;
         }
 
         button {
@@ -136,7 +141,7 @@
 
         /* Mobile tweaks */
         @media (max-width: 768px) {
-            .hud { padding: 1.5rem; }
+            #hud { padding: 1.5rem; }
             .meter-container { width: 150px; }
             .hud-bottom { flex-direction: column; gap: 1rem; }
         }
@@ -148,7 +153,7 @@
 
     <div id="hud">
         <div class="hud-top">
-            <span>Z-INDEX: SUB-BASEMENT</span>
+            <span id="tier-text">TIER: I / V</span>
             <span>SYSTEM: ARMED</span>
         </div>
         <div class="hud-bottom">
@@ -168,15 +173,15 @@
     <!-- Intro Screen -->
     <div id="intro" class="overlay">
         <h1>The Calm Heist</h1>
-        <p>Secure the artifact and drag it to the extraction zone.<br>Motion sensors are calibrated to detect erratic movement. Move too fast, the alarm triggers. Touch the lasers, you die.</p>
+        <p>Secure the artifact and drag it to the extraction zone. Motion sensors detect erratic movement. Touching lasers results in immediate termination.</p>
         <button id="start-btn">Initiate Link</button>
     </div>
 
-    <!-- Outro Screen -->
+    <!-- Dynamic Outro/Transition Screen -->
     <div id="outro" class="overlay hidden">
         <h1 id="outro-title"></h1>
         <p id="outro-desc"></p>
-        <button id="restart-btn">Restart Matrix</button>
+        <button id="action-btn">Action</button>
     </div>
 
     <script>
@@ -193,31 +198,45 @@
         const outroScreen = document.getElementById('outro');
         const outroTitle = document.getElementById('outro-title');
         const outroDesc = document.getElementById('outro-desc');
+        const actionBtn = document.getElementById('action-btn');
         const alarmText = document.getElementById('alarm-text');
         const alarmFill = document.getElementById('alarm-fill');
+        const tierText = document.getElementById('tier-text');
         const hud = document.getElementById('hud');
 
-        // State Machine
-        let state = 'INTRO'; // INTRO, PLAYING, WON, LOST
-        let w, h;
-        let lastTime = 0;
-        let reqId;
+        // State Machine & Tiers
+        let state = 'INTRO'; // INTRO, PLAYING, TIER_CLEAR, WON, LOST
+        let currentTier = 1;
+        const MAX_TIER = 5;
+        const romanNumerals = ['I', 'II', 'III', 'IV', 'V'];
+        let w, h, lastTime = 0, reqId;
 
         // Core Game Variables
         let alarm = 0;
         const MAX_ALARM = 100;
-        const SAFE_VELOCITY = 0.45; // pixels per ms
-        const PENALTY_MULT = 1.8;
+        let safeVelocity = 0.45; 
+        let penaltyMult = 1.8;
         const COOLDOWN_RATE = 0.08;
 
+        // Level Configuration Protocol
+        const tierConfigs = [
+            { vMax: 0.45, pen: 1.8, extR: 50, laserCount: 3, laserSpd: 1.0, roam: 0, extMove: 0 },
+            { vMax: 0.40, pen: 2.0, extR: 45, laserCount: 4, laserSpd: 1.2, roam: 0, extMove: 0 },
+            { vMax: 0.35, pen: 2.3, extR: 40, laserCount: 4, laserSpd: 1.5, roam: 0.08, extMove: 0.15 },
+            { vMax: 0.30, pen: 2.6, extR: 35, laserCount: 5, laserSpd: 1.8, roam: 0.15, extMove: 0.25 },
+            { vMax: 0.25, pen: 3.0, extR: 30, laserCount: 6, laserSpd: 2.2, roam: 0.20, extMove: 0.35 }
+        ];
+
         // Entities
-        let artifact = { x: 0, y: 0, r: 18, isDragging: false, color: '#00F3FF' };
-        let extraction = { x: 0, y: 0, r: 50 };
+        let artifact = { x: 0, y: 0, r: 18, isDragging: false };
+        let extraction = { baseX: 0, baseY: 0, x: 0, y: 0, r: 50 };
         let lasers = [];
         let particles = [];
 
-        // Input Tracking
+        // Input Tracking (Hardware-level)
         let pointer = { x: 0, y: 0, lastX: 0, lastY: 0 };
+        let pointerOffset = { x: 0, y: 0 };
+        let dpr = 1;
 
         // Web Audio API
         let audioCtx, osc, gainNode, filterNode;
@@ -235,7 +254,6 @@
             gainNode = audioCtx.createGain();
 
             osc.type = 'sawtooth';
-            osc.frequency.value = 40; // Deep ominous hum
             
             filterNode.type = 'lowpass';
             filterNode.frequency.value = 100;
@@ -254,64 +272,104 @@
             if (!audioInitialized || !audioCtx) return;
             const intensity = currentAlarm / MAX_ALARM;
             
-            // Pitch and filter scale with tension
-            const targetFreq = 40 + (intensity * 150);
+            // Pitch and tension scale with both Alarm Level AND Current Tier
+            const tierTension = (currentTier - 1) * 10; 
+            const targetFreq = 40 + tierTension + (intensity * 150);
             const targetCutoff = 100 + (intensity * 2000);
             
             osc.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.1);
             filterNode.frequency.setTargetAtTime(targetCutoff, audioCtx.currentTime, 0.1);
             
-            // Dynamic pulsating volume based on alarm level
-            const pulseRate = 1 + (intensity * 10);
+            const pulseRate = 1 + (intensity * 10) + (currentTier * 0.5);
             const pulse = 0.7 + (Math.sin(Date.now() * 0.005 * pulseRate) * 0.3);
-            const vol = (0.1 + (intensity * 0.4)) * pulse;
+            const vol = (0.05 + (intensity * 0.4) + (currentTier * 0.02)) * pulse;
             
-            gainNode.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.05);
+            if (state === 'PLAYING') gainNode.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.05);
         }
 
-        // ─── RESIZE & SETUP ──────────────────────────────────────────────
+        // ─── RESIZE & ENVIRONMENT SETUP ──────────────────────────────────
 
         function resize() {
-            w = canvas.width = window.innerWidth;
-            h = canvas.height = window.innerHeight;
+            w = window.innerWidth;
+            h = window.innerHeight;
+            dpr = window.devicePixelRatio || 1;
             
-            // Position Zones relative to screen size
-            extraction.x = w / 2;
-            extraction.y = h * 0.15;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = `${w}px`;
+            canvas.style.height = `${h}px`;
             
-            if (state === 'INTRO') resetEntities();
+            ctx.scale(dpr, dpr);
+            
+            if (state === 'INTRO' || state === 'LOST' || state === 'WON') {
+                buildTierEnvironment();
+            }
         }
 
-        function resetEntities() {
+        function buildTierEnvironment() {
+            const cfg = tierConfigs[currentTier - 1];
+            
             artifact.x = w / 2;
             artifact.y = h * 0.85;
             artifact.isDragging = false;
+            
+            extraction.baseX = w / 2;
+            extraction.baseY = h * 0.15;
+            extraction.x = extraction.baseX;
+            extraction.y = extraction.baseY;
+            extraction.r = cfg.extR;
+
+            safeVelocity = cfg.vMax;
+            penaltyMult = cfg.pen;
             alarm = 0;
             particles = [];
+            lasers = [];
             
-            // Dynamic procedural laser hubs
-            lasers = [
-                { cx: w * 0.25, cy: h * 0.5, length: Math.min(w, h) * 0.4, angle: 0, speed: 0.0012, dir: 1 },
-                { cx: w * 0.75, cy: h * 0.5, length: Math.min(w, h) * 0.4, angle: Math.PI, speed: 0.0015, dir: -1 },
-                { cx: w * 0.5,  cy: h * 0.35, length: Math.min(w, h) * 0.25, angle: Math.PI/2, speed: 0.002, dir: 1 }
-            ];
+            tierText.innerText = `TIER: ${romanNumerals[currentTier - 1]} / V`;
+
+            // Procedural Hub Generation mapping to Tier difficulty
+            if (currentTier === 1) {
+                // Tier 1: Fixed classic layout
+                lasers.push({ baseCx: w * 0.25, baseCy: h * 0.5, length: Math.min(w, h) * 0.4, angle: 0, speed: 0.0012, dir: 1, roamPhase: 0, roamRadius: 0 });
+                lasers.push({ baseCx: w * 0.75, baseCy: h * 0.5, length: Math.min(w, h) * 0.4, angle: Math.PI, speed: 0.0015, dir: -1, roamPhase: 0, roamRadius: 0 });
+                lasers.push({ baseCx: w * 0.5,  baseCy: h * 0.35, length: Math.min(w, h) * 0.25, angle: Math.PI/2, speed: 0.002, dir: 1, roamPhase: 0, roamRadius: 0 });
+            } else {
+                // Tier 2-5: Procedural placement
+                for (let i = 0; i < cfg.laserCount; i++) {
+                    const side = i % 2 === 0 ? 0.2 : 0.8;
+                    const yDist = 0.2 + ((i / cfg.laserCount) * 0.5);
+                    lasers.push({
+                        baseCx: w * side + (Math.random() * (w * 0.1) * (side === 0.2 ? 1 : -1)),
+                        baseCy: h * yDist,
+                        length: Math.min(w, h) * (0.25 + Math.random() * 0.2),
+                        angle: Math.random() * Math.PI * 2,
+                        speed: (0.001 + Math.random() * 0.0015) * cfg.laserSpd,
+                        dir: i % 2 === 0 ? 1 : -1,
+                        roamPhase: Math.random() * Math.PI * 2,
+                        roamRadius: cfg.roam * (Math.min(w, h))
+                    });
+                }
+            }
         }
 
         window.addEventListener('resize', resize);
         resize();
 
-        // ─── INPUT HANDLING ──────────────────────────────────────────────
+        // ─── HARDWARE-LEVEL INPUT HANDLING ───────────────────────────────
 
         window.addEventListener('pointerdown', e => {
+            if (e.target.tagName === 'BUTTON') return;
             if (state !== 'PLAYING') return;
             const dist = Math.hypot(e.clientX - artifact.x, e.clientY - artifact.y);
             
-            // Forgiving hitbox for touch devices
-            if (dist < artifact.r * 3.5) {
+            if (dist < artifact.r * 3.5) { // Forgiving touch target
                 artifact.isDragging = true;
+                pointerOffset.x = artifact.x - e.clientX;
+                pointerOffset.y = artifact.y - e.clientY;
                 pointer.x = pointer.lastX = e.clientX;
                 pointer.y = pointer.lastY = e.clientY;
                 canvas.style.cursor = 'none';
+                try { canvas.setPointerCapture(e.pointerId); } catch(err) {}
             }
         });
 
@@ -321,19 +379,26 @@
             pointer.y = e.clientY;
             
             if (artifact.isDragging) {
-                artifact.x = pointer.x;
-                artifact.y = pointer.y;
+                artifact.x = pointer.x + pointerOffset.x;
+                artifact.y = pointer.y + pointerOffset.y;
             }
         });
 
-        window.addEventListener('pointerup', () => {
-            artifact.isDragging = false;
-            canvas.style.cursor = 'crosshair';
-        });
+        function endDrag(e) {
+            if (artifact.isDragging) {
+                artifact.isDragging = false;
+                canvas.style.cursor = 'crosshair';
+                if (e && e.pointerId) {
+                    try { canvas.releasePointerCapture(e.pointerId); } catch(err) {}
+                }
+            }
+        }
 
-        // ─── MATH UTILS ──────────────────────────────────────────────────
+        window.addEventListener('pointerup', endDrag);
+        window.addEventListener('pointercancel', endDrag);
 
-        // Distance from point (px,py) to line segment (x1,y1)->(x2,y2)
+        // ─── MATH & GEOMETRY ─────────────────────────────────────────────
+
         function distToSegment(px, py, x1, y1, x2, y2) {
             const A = px - x1, B = py - y1, C = x2 - x1, D = y2 - y1;
             const dot = A * C + B * D;
@@ -347,39 +412,56 @@
             return Math.hypot(px - xx, py - yy);
         }
 
-        // ─── GAME LOOP ───────────────────────────────────────────────────
+        // ─── STATE MACHINE & LOOP ────────────────────────────────────────
 
         function startGame() {
             if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
             initAudio();
-            resetEntities();
+            currentTier = 1;
+            buildTierEnvironment();
+            transitionToPlay();
+        }
+
+        function advanceTier() {
+            currentTier++;
+            buildTierEnvironment();
+            transitionToPlay();
+        }
+
+        function transitionToPlay() {
             introScreen.classList.add('hidden');
             outroScreen.classList.add('hidden');
             hud.style.boxShadow = 'none';
             hud.classList.remove('glitch-effect');
             state = 'PLAYING';
             lastTime = performance.now();
-            if(!reqId) reqId = requestAnimationFrame(loop);
+            if (!reqId) reqId = requestAnimationFrame(loop);
         }
 
-        function endGame(won) {
-            state = won ? 'WON' : 'LOST';
+        function handleLevelEnd(type) {
+            state = type;
             artifact.isDragging = false;
             canvas.style.cursor = 'crosshair';
             
-            if(gainNode) {
-                gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5); // Fade out
-            }
+            if (gainNode) gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5);
 
-            outroTitle.innerText = won ? 'HEIST SUCCESSFUL' : 'ALARM TRIGGERED';
-            outroTitle.style.color = won ? 'var(--neon-cyan)' : 'var(--neon-red)';
-            outroDesc.innerText = won 
-                ? 'Artifact secured. Velocity remained under detection threshold.' 
-                : 'Motion spike detected. Lethal countermeasures deployed.';
-            
-            if(!won) {
+            if (type === 'LOST') {
+                outroTitle.innerText = 'ALARM TRIGGERED';
+                outroTitle.style.color = 'var(--neon-red)';
+                outroDesc.innerText = 'Lethal countermeasures deployed. Motion parameters exceeded bounds.';
+                actionBtn.innerText = 'Restart Matrix';
                 hud.style.boxShadow = 'inset 0 0 100px rgba(255,0,60,0.5)';
                 hud.classList.add('glitch-effect');
+            } else if (type === 'TIER_CLEAR') {
+                outroTitle.innerText = `TIER ${romanNumerals[currentTier - 1]} SECURED`;
+                outroTitle.style.color = 'var(--neon-cyan)';
+                outroDesc.innerText = 'Sub-basement access granted. Sensor arrays are tightening.';
+                actionBtn.innerText = `Infiltrate Tier ${romanNumerals[currentTier]}`;
+            } else if (type === 'WON') {
+                outroTitle.innerText = 'HEIST SUCCESSFUL';
+                outroTitle.style.color = 'var(--neon-cyan)';
+                outroDesc.innerText = 'Total extraction complete. The artifact is secured.';
+                actionBtn.innerText = 'Re-enter Matrix';
             }
 
             setTimeout(() => outroScreen.classList.remove('hidden'), 500);
@@ -387,21 +469,27 @@
 
         function update(dt) {
             if (dt > 100) return; // Prevent lag spikes from ruining logic
+            const time = performance.now();
 
-            // 1. Velocity & Alarm Logic
+            // 1. Dynamic Extraction Motion (Tiers 3-5)
+            const cfg = tierConfigs[currentTier - 1];
+            if (cfg.extMove > 0) {
+                extraction.x = extraction.baseX + Math.sin(time * 0.001) * (w * cfg.extMove);
+            }
+
+            // 2. Velocity & Alarm Logic
             if (artifact.isDragging) {
                 const dx = pointer.x - pointer.lastX;
                 const dy = pointer.y - pointer.lastY;
                 const dist = Math.hypot(dx, dy);
-                const velocity = dist / dt; // px per ms
+                const velocity = dist / dt;
 
-                if (velocity > SAFE_VELOCITY) {
-                    alarm += (velocity - SAFE_VELOCITY) * PENALTY_MULT;
+                if (velocity > safeVelocity) {
+                    alarm += (velocity - safeVelocity) * penaltyMult;
                 } else {
                     alarm -= COOLDOWN_RATE;
                 }
 
-                // Spawn particles while dragging
                 if (dist > 0.5 && Math.random() > 0.5) {
                     particles.push({
                         x: artifact.x + (Math.random()-0.5)*20,
@@ -412,46 +500,52 @@
                     });
                 }
             } else {
-                alarm -= COOLDOWN_RATE * 2; // Cool down faster if holding still and released
+                alarm -= COOLDOWN_RATE * 2;
             }
             
             alarm = Math.max(0, Math.min(MAX_ALARM, alarm));
 
-            // 2. Laser Updates & Collision
+            // 3. Laser Updates & Collision
             lasers.forEach(l => {
                 l.angle += l.speed * l.dir * dt;
-                const lx = l.cx + Math.cos(l.angle) * l.length;
-                const ly = l.cy + Math.sin(l.angle) * l.length;
                 
-                // Check collision
-                const d = distToSegment(artifact.x, artifact.y, l.cx, l.cy, lx, ly);
-                if (d < artifact.r) {
-                    alarm += 30; // Severe penalty for touching laser
-                }
+                // Roaming hubs
+                const cx = l.baseCx + Math.cos(l.roamPhase + time * 0.0005) * l.roamRadius;
+                const cy = l.baseCy + Math.sin(l.roamPhase + time * 0.0005) * l.roamRadius;
+                
+                const lx = cx + Math.cos(l.angle) * l.length;
+                const ly = cy + Math.sin(l.angle) * l.length;
+                
+                // Track visual positions for drawing
+                l.renderCx = cx; l.renderCy = cy; l.renderLx = lx; l.renderLy = ly;
+
+                // Check collision against actual drawn segment
+                const d = distToSegment(artifact.x, artifact.y, cx, cy, lx, ly);
+                if (d < artifact.r) alarm += 30; // Severe penalty
             });
 
-            // 3. Update Particles
+            // 4. Update Particles
             particles.forEach(p => {
                 p.x += p.vx * dt; p.y += p.vy * dt;
                 p.life -= dt * 0.002;
             });
             particles = particles.filter(p => p.life > 0);
 
-            // 4. State Checks
-            if (alarm >= MAX_ALARM) endGame(false);
+            // 5. State Checks
+            if (alarm >= MAX_ALARM) handleLevelEnd('LOST');
             
             if (Math.hypot(artifact.x - extraction.x, artifact.y - extraction.y) < extraction.r) {
-                endGame(true);
+                if (currentTier < MAX_TIER) handleLevelEnd('TIER_CLEAR');
+                else handleLevelEnd('WON');
             }
 
-            // 5. Update UI & Audio
+            // 6. Update UI & Audio
             pointer.lastX = pointer.x;
             pointer.lastY = pointer.y;
             
             alarmText.innerText = alarm.toFixed(1) + '%';
             alarmFill.style.transform = `scaleX(${alarm / 100})`;
             
-            // Color shift based on danger
             if (alarm > 75) {
                 alarmText.style.color = 'var(--neon-red)';
                 alarmFill.style.backgroundColor = 'var(--neon-red)';
@@ -464,8 +558,9 @@
         }
 
         function draw() {
-            // Clear & Draw Grid
             ctx.clearRect(0, 0, w, h);
+            
+            // Grid
             ctx.strokeStyle = 'rgba(255,255,255,0.03)';
             ctx.lineWidth = 1;
             const gridSz = 50;
@@ -474,48 +569,41 @@
             for(let i = 0; i < h; i += gridSz) { ctx.moveTo(0, i); ctx.lineTo(w, i); }
             ctx.stroke();
 
-            // Draw Extraction Zone
+            // Extraction Zone
             ctx.save();
             ctx.translate(extraction.x, extraction.y);
             ctx.rotate(performance.now() * 0.001);
             ctx.strokeStyle = 'rgba(0, 255, 102, 0.4)';
             ctx.lineWidth = 2;
             ctx.setLineDash([10, 15]);
-            ctx.beginPath();
-            ctx.arc(0, 0, extraction.r, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(0, 0, extraction.r - 10, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.beginPath(); ctx.arc(0, 0, extraction.r, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(0, 0, extraction.r - 10, 0, Math.PI * 2); ctx.stroke();
             ctx.restore();
 
-            // Draw Lasers
+            // Lasers
             ctx.save();
             ctx.lineCap = 'round';
             ctx.globalCompositeOperation = 'screen';
             lasers.forEach(l => {
-                const lx = l.cx + Math.cos(l.angle) * l.length;
-                const ly = l.cy + Math.sin(l.angle) * l.length;
+                // Ensure renders use base coords if not yet updated by play state
+                const cx = l.renderCx || l.baseCx;
+                const cy = l.renderCy || l.baseCy;
+                const lx = l.renderLx || (cx + Math.cos(l.angle) * l.length);
+                const ly = l.renderLy || (cy + Math.sin(l.angle) * l.length);
                 
                 // Hub
-                ctx.fillStyle = '#111';
-                ctx.strokeStyle = '#FFF';
-                ctx.lineWidth = 2;
-                ctx.setLineDash([]);
-                ctx.beginPath(); ctx.arc(l.cx, l.cy, 10, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#111'; ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 2; ctx.setLineDash([]);
+                ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI*2); ctx.fill(); ctx.stroke();
 
                 // Beam
-                ctx.beginPath();
-                ctx.moveTo(l.cx, l.cy);
-                ctx.lineTo(lx, ly);
-                ctx.lineWidth = 4;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = '#FFF';
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(lx, ly);
+                ctx.lineWidth = 4; ctx.shadowBlur = 15; ctx.shadowColor = '#FFF';
                 ctx.stroke();
             });
             ctx.restore();
 
-            // Draw Particles
+            // Particles
             ctx.save();
             ctx.fillStyle = 'var(--neon-cyan)';
             ctx.globalCompositeOperation = 'screen';
@@ -525,7 +613,7 @@
             });
             ctx.restore();
 
-            // Draw Artifact
+            // Artifact
             ctx.save();
             ctx.translate(artifact.x, artifact.y);
             if (artifact.isDragging) {
@@ -534,29 +622,22 @@
                 ctx.shadowColor = alarm > 75 ? 'var(--neon-red)' : 'var(--neon-cyan)';
             }
             
-            // Icosahedron/Diamond Shape
             ctx.beginPath();
-            ctx.moveTo(0, -artifact.r);
-            ctx.lineTo(artifact.r, 0);
-            ctx.lineTo(0, artifact.r);
-            ctx.lineTo(-artifact.r, 0);
+            ctx.moveTo(0, -artifact.r); ctx.lineTo(artifact.r, 0);
+            ctx.lineTo(0, artifact.r); ctx.lineTo(-artifact.r, 0);
             ctx.closePath();
             
             ctx.fillStyle = alarm > 75 ? 'rgba(255, 0, 60, 0.8)' : 'rgba(0, 243, 255, 0.8)';
             ctx.fill();
-            ctx.strokeStyle = '#FFF';
-            ctx.lineWidth = 2;
-            ctx.stroke();
+            ctx.strokeStyle = '#FFF'; ctx.lineWidth = 2; ctx.stroke();
             
-            // Inner detail
             ctx.beginPath();
             ctx.moveTo(0, -artifact.r); ctx.lineTo(0, artifact.r);
             ctx.moveTo(-artifact.r, 0); ctx.lineTo(artifact.r, 0);
-            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-            ctx.stroke();
+            ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.stroke();
             ctx.restore();
             
-            // Draw Danger Vignette if high alarm
+            // Danger Vignette
             if (alarm > 50) {
                 const alpha = (alarm - 50) / 100;
                 const grad = ctx.createRadialGradient(w/2, h/2, h*0.2, w/2, h/2, h);
@@ -570,19 +651,20 @@
         function loop(time) {
             const dt = time - lastTime;
             lastTime = time;
-            
-            if (state === 'PLAYING') {
-                update(dt);
-            }
+            if (state === 'PLAYING') update(dt);
             draw();
             reqId = requestAnimationFrame(loop);
         }
 
-        // Button Binding
-        document.getElementById('start-btn').addEventListener('click', startGame);
-        document.getElementById('restart-btn').addEventListener('click', startGame);
+        // Action Bindings
+        document.getElementById('start-btn').addEventListener('pointerdown', startGame);
+        document.getElementById('action-btn').addEventListener('pointerdown', () => {
+            if (state === 'TIER_CLEAR') advanceTier();
+            else startGame(); // Resets to Tier 1 on Won/Lost
+        });
 
-        // Render initial background before game starts
+        // Initial Render
+        buildTierEnvironment();
         draw();
 
     </script>
