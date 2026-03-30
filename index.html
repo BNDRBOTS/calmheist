@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>The Calm Heist | Immersive Interactive</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg: #050505;
+            --neon-cyan: #00F3FF;
+            --neon-red: #FF003C;
+            --glass: rgba(255, 255, 255, 0.05);
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'Space Mono', monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; cursor: crosshair; }
+        
+        body, html {
+            width: 100vw; height: 100vh;
+            background-color: var(--bg);
+            color: #fff;
+            overflow: hidden;
+            font-family: var(--font-display);
+            touch-action: none; /* Prevents mobile scrolling */
+            -webkit-user-select: none; user-select: none;
+        }
+
+        /* Scanline Overlay */
+        body::after {
+            content: ""; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                        linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 3px, 3px 100%;
+            pointer-events: none; z-index: 100;
+        }
+
+        #stage {
+            position: absolute; top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: 1;
+        }
+
+        /* UI Chrome */
+        #hud {
+            position: absolute; top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: 10; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+            padding: 2rem;
+            transition: box-shadow 0.3s ease;
+        }
+
+        .hud-top, .hud-bottom {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            font-family: var(--font-mono); font-size: 0.85rem; letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .hud-top span { opacity: 0.6; }
+
+        /* Velocity/Alarm Meter */
+        .meter-container {
+            display: flex; flex-direction: column; gap: 0.5rem;
+            width: 250px;
+        }
+        .meter-label { display: flex; justify-content: space-between; color: var(--neon-cyan); font-weight: 700; }
+        .meter-track {
+            width: 100%; height: 4px;
+            background: var(--glass);
+            position: relative; overflow: hidden;
+        }
+        .meter-fill {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: var(--neon-cyan);
+            transform-origin: left; transform: scaleX(0);
+            will-change: transform, background-color;
+            transition: background-color 0.3s ease;
+        }
+
+        /* Modals / Screens */
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(5,5,5,0.85); backdrop-filter: blur(10px);
+            z-index: 50; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; text-align: center;
+            transition: opacity 0.5s ease, visibility 0.5s;
+        }
+        .overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+        h1 {
+            font-size: clamp(3rem, 8vw, 6rem);
+            font-weight: 700; letter-spacing: -0.04em;
+            line-height: 1; margin-bottom: 1.5rem;
+            text-transform: uppercase;
+        }
+        p {
+            font-family: var(--font-mono); font-size: 0.9rem;
+            opacity: 0.7; max-width: 500px; line-height: 1.6;
+            margin-bottom: 3rem; letter-spacing: 0.05em;
+        }
+
+        button {
+            background: transparent; border: 1px solid var(--neon-cyan);
+            color: var(--neon-cyan); font-family: var(--font-mono);
+            font-size: 1rem; padding: 1rem 3rem; text-transform: uppercase;
+            letter-spacing: 0.15em; cursor: pointer; position: relative;
+            overflow: hidden; transition: color 0.3s, transform 0.3s;
+            pointer-events: auto;
+        }
+        button::before {
+            content: ''; position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%; background: var(--neon-cyan);
+            transform-origin: right; transform: scaleX(0);
+            transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+            z-index: -1;
+        }
+        button:hover { color: var(--bg); transform: scale(1.05); }
+        button:hover::before { transform-origin: left; transform: scaleX(1); }
+
+        .glitch-effect { animation: glitch 0.2s cubic-bezier(.25, .46, .45, .94) both infinite; color: var(--neon-red); }
+        
+        @keyframes glitch {
+            0% { transform: translate(0) }
+            20% { transform: translate(-2px, 2px) }
+            40% { transform: translate(-2px, -2px) }
+            60% { transform: translate(2px, 2px) }
+            80% { transform: translate(2px, -2px) }
+            100% { transform: translate(0) }
+        }
+
+        /* Mobile tweaks */
+        @media (max-width: 768px) {
+            .hud { padding: 1.5rem; }
+            .meter-container { width: 150px; }
+            .hud-bottom { flex-direction: column; gap: 1rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="stage"></canvas>
+
+    <div id="hud">
+        <div class="hud-top">
+            <span>Z-INDEX: SUB-BASEMENT</span>
+            <span>SYSTEM: ARMED</span>
+        </div>
+        <div class="hud-bottom">
+            <div class="meter-container">
+                <div class="meter-label">
+                    <span>MOTION SENSOR</span>
+                    <span id="alarm-text">0.0%</span>
+                </div>
+                <div class="meter-track">
+                    <div id="alarm-fill"></div>
+                </div>
+            </div>
+            <span>HOLD & DRAG ARTIFACT</span>
+        </div>
+    </div>
+
+    <!-- Intro Screen -->
+    <div id="intro" class="overlay">
+        <h1>The Calm Heist</h1>
+        <p>Secure the artifact and drag it to the extraction zone.<br>Motion sensors are calibrated to detect erratic movement. Move too fast, the alarm triggers. Touch the lasers, you die.</p>
+        <button id="start-btn">Initiate Link</button>
+    </div>
+
+    <!-- Outro Screen -->
+    <div id="outro" class="overlay hidden">
+        <h1 id="outro-title"></h1>
+        <p id="outro-desc"></p>
+        <button id="restart-btn">Restart Matrix</button>
+    </div>
+
+    <script>
+        /**
+         * The Calm Heist - Core Logic
+         * Forensic Assembly: Velocity constraints over pure spatial challenges.
+         */
+        
+        const canvas = document.getElementById('stage');
+        const ctx = canvas.getContext('2d');
+        
+        // UI Elements
+        const introScreen = document.getElementById('intro');
+        const outroScreen = document.getElementById('outro');
+        const outroTitle = document.getElementById('outro-title');
+        const outroDesc = document.getElementById('outro-desc');
+        const alarmText = document.getElementById('alarm-text');
+        const alarmFill = document.getElementById('alarm-fill');
+        const hud = document.getElementById('hud');
+
+        // State Machine
+        let state = 'INTRO'; // INTRO, PLAYING, WON, LOST
+        let w, h;
+        let lastTime = 0;
+        let reqId;
+
+        // Core Game Variables
+        let alarm = 0;
+        const MAX_ALARM = 100;
+        const SAFE_VELOCITY = 0.45; // pixels per ms
+        const PENALTY_MULT = 1.8;
+        const COOLDOWN_RATE = 0.08;
+
+        // Entities
+        let artifact = { x: 0, y: 0, r: 18, isDragging: false, color: '#00F3FF' };
+        let extraction = { x: 0, y: 0, r: 50 };
+        let lasers = [];
+        let particles = [];
+
+        // Input Tracking
+        let pointer = { x: 0, y: 0, lastX: 0, lastY: 0 };
+
+        // Web Audio API
+        let audioCtx, osc, gainNode, filterNode;
+        let audioInitialized = false;
+
+        // ─── INITIALIZATION & AUDIO ───────────────────────────────────────
+
+        function initAudio() {
+            if (audioInitialized) return;
+            const AC = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AC();
+            
+            osc = audioCtx.createOscillator();
+            filterNode = audioCtx.createBiquadFilter();
+            gainNode = audioCtx.createGain();
+
+            osc.type = 'sawtooth';
+            osc.frequency.value = 40; // Deep ominous hum
+            
+            filterNode.type = 'lowpass';
+            filterNode.frequency.value = 100;
+
+            gainNode.gain.value = 0;
+
+            osc.connect(filterNode);
+            filterNode.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            osc.start();
+            audioInitialized = true;
+        }
+
+        function updateAudio(currentAlarm) {
+            if (!audioInitialized || !audioCtx) return;
+            const intensity = currentAlarm / MAX_ALARM;
+            
+            // Pitch and filter scale with tension
+            const targetFreq = 40 + (intensity * 150);
+            const targetCutoff = 100 + (intensity * 2000);
+            
+            osc.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.1);
+            filterNode.frequency.setTargetAtTime(targetCutoff, audioCtx.currentTime, 0.1);
+            
+            // Dynamic pulsating volume based on alarm level
+            const pulseRate = 1 + (intensity * 10);
+            const pulse = 0.7 + (Math.sin(Date.now() * 0.005 * pulseRate) * 0.3);
+            const vol = (0.1 + (intensity * 0.4)) * pulse;
+            
+            gainNode.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.05);
+        }
+
+        // ─── RESIZE & SETUP ──────────────────────────────────────────────
+
+        function resize() {
+            w = canvas.width = window.innerWidth;
+            h = canvas.height = window.innerHeight;
+            
+            // Position Zones relative to screen size
+            extraction.x = w / 2;
+            extraction.y = h * 0.15;
+            
+            if (state === 'INTRO') resetEntities();
+        }
+
+        function resetEntities() {
+            artifact.x = w / 2;
+            artifact.y = h * 0.85;
+            artifact.isDragging = false;
+            alarm = 0;
+            particles = [];
+            
+            // Dynamic procedural laser hubs
+            lasers = [
+                { cx: w * 0.25, cy: h * 0.5, length: Math.min(w, h) * 0.4, angle: 0, speed: 0.0012, dir: 1 },
+                { cx: w * 0.75, cy: h * 0.5, length: Math.min(w, h) * 0.4, angle: Math.PI, speed: 0.0015, dir: -1 },
+                { cx: w * 0.5,  cy: h * 0.35, length: Math.min(w, h) * 0.25, angle: Math.PI/2, speed: 0.002, dir: 1 }
+            ];
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        // ─── INPUT HANDLING ──────────────────────────────────────────────
+
+        window.addEventListener('pointerdown', e => {
+            if (state !== 'PLAYING') return;
+            const dist = Math.hypot(e.clientX - artifact.x, e.clientY - artifact.y);
+            
+            // Forgiving hitbox for touch devices
+            if (dist < artifact.r * 3.5) {
+                artifact.isDragging = true;
+                pointer.x = pointer.lastX = e.clientX;
+                pointer.y = pointer.lastY = e.clientY;
+                canvas.style.cursor = 'none';
+            }
+        });
+
+        window.addEventListener('pointermove', e => {
+            if (state !== 'PLAYING') return;
+            pointer.x = e.clientX;
+            pointer.y = e.clientY;
+            
+            if (artifact.isDragging) {
+                artifact.x = pointer.x;
+                artifact.y = pointer.y;
+            }
+        });
+
+        window.addEventListener('pointerup', () => {
+            artifact.isDragging = false;
+            canvas.style.cursor = 'crosshair';
+        });
+
+        // ─── MATH UTILS ──────────────────────────────────────────────────
+
+        // Distance from point (px,py) to line segment (x1,y1)->(x2,y2)
+        function distToSegment(px, py, x1, y1, x2, y2) {
+            const A = px - x1, B = py - y1, C = x2 - x1, D = y2 - y1;
+            const dot = A * C + B * D;
+            const len_sq = C * C + D * D;
+            let param = -1;
+            if (len_sq !== 0) param = dot / len_sq;
+            let xx, yy;
+            if (param < 0) { xx = x1; yy = y1; }
+            else if (param > 1) { xx = x2; yy = y2; }
+            else { xx = x1 + param * C; yy = y1 + param * D; }
+            return Math.hypot(px - xx, py - yy);
+        }
+
+        // ─── GAME LOOP ───────────────────────────────────────────────────
+
+        function startGame() {
+            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+            initAudio();
+            resetEntities();
+            introScreen.classList.add('hidden');
+            outroScreen.classList.add('hidden');
+            hud.style.boxShadow = 'none';
+            hud.classList.remove('glitch-effect');
+            state = 'PLAYING';
+            lastTime = performance.now();
+            if(!reqId) reqId = requestAnimationFrame(loop);
+        }
+
+        function endGame(won) {
+            state = won ? 'WON' : 'LOST';
+            artifact.isDragging = false;
+            canvas.style.cursor = 'crosshair';
+            
+            if(gainNode) {
+                gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5); // Fade out
+            }
+
+            outroTitle.innerText = won ? 'HEIST SUCCESSFUL' : 'ALARM TRIGGERED';
+            outroTitle.style.color = won ? 'var(--neon-cyan)' : 'var(--neon-red)';
+            outroDesc.innerText = won 
+                ? 'Artifact secured. Velocity remained under detection threshold.' 
+                : 'Motion spike detected. Lethal countermeasures deployed.';
+            
+            if(!won) {
+                hud.style.boxShadow = 'inset 0 0 100px rgba(255,0,60,0.5)';
+                hud.classList.add('glitch-effect');
+            }
+
+            setTimeout(() => outroScreen.classList.remove('hidden'), 500);
+        }
+
+        function update(dt) {
+            if (dt > 100) return; // Prevent lag spikes from ruining logic
+
+            // 1. Velocity & Alarm Logic
+            if (artifact.isDragging) {
+                const dx = pointer.x - pointer.lastX;
+                const dy = pointer.y - pointer.lastY;
+                const dist = Math.hypot(dx, dy);
+                const velocity = dist / dt; // px per ms
+
+                if (velocity > SAFE_VELOCITY) {
+                    alarm += (velocity - SAFE_VELOCITY) * PENALTY_MULT;
+                } else {
+                    alarm -= COOLDOWN_RATE;
+                }
+
+                // Spawn particles while dragging
+                if (dist > 0.5 && Math.random() > 0.5) {
+                    particles.push({
+                        x: artifact.x + (Math.random()-0.5)*20,
+                        y: artifact.y + (Math.random()-0.5)*20,
+                        vx: (Math.random()-0.5)*0.5,
+                        vy: (Math.random()-0.5)*0.5,
+                        life: 1
+                    });
+                }
+            } else {
+                alarm -= COOLDOWN_RATE * 2; // Cool down faster if holding still and released
+            }
+            
+            alarm = Math.max(0, Math.min(MAX_ALARM, alarm));
+
+            // 2. Laser Updates & Collision
+            lasers.forEach(l => {
+                l.angle += l.speed * l.dir * dt;
+                const lx = l.cx + Math.cos(l.angle) * l.length;
+                const ly = l.cy + Math.sin(l.angle) * l.length;
+                
+                // Check collision
+                const d = distToSegment(artifact.x, artifact.y, l.cx, l.cy, lx, ly);
+                if (d < artifact.r) {
+                    alarm += 30; // Severe penalty for touching laser
+                }
+            });
+
+            // 3. Update Particles
+            particles.forEach(p => {
+                p.x += p.vx * dt; p.y += p.vy * dt;
+                p.life -= dt * 0.002;
+            });
+            particles = particles.filter(p => p.life > 0);
+
+            // 4. State Checks
+            if (alarm >= MAX_ALARM) endGame(false);
+            
+            if (Math.hypot(artifact.x - extraction.x, artifact.y - extraction.y) < extraction.r) {
+                endGame(true);
+            }
+
+            // 5. Update UI & Audio
+            pointer.lastX = pointer.x;
+            pointer.lastY = pointer.y;
+            
+            alarmText.innerText = alarm.toFixed(1) + '%';
+            alarmFill.style.transform = `scaleX(${alarm / 100})`;
+            
+            // Color shift based on danger
+            if (alarm > 75) {
+                alarmText.style.color = 'var(--neon-red)';
+                alarmFill.style.backgroundColor = 'var(--neon-red)';
+            } else {
+                alarmText.style.color = 'var(--neon-cyan)';
+                alarmFill.style.backgroundColor = 'var(--neon-cyan)';
+            }
+
+            updateAudio(alarm);
+        }
+
+        function draw() {
+            // Clear & Draw Grid
+            ctx.clearRect(0, 0, w, h);
+            ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+            ctx.lineWidth = 1;
+            const gridSz = 50;
+            ctx.beginPath();
+            for(let i = 0; i < w; i += gridSz) { ctx.moveTo(i, 0); ctx.lineTo(i, h); }
+            for(let i = 0; i < h; i += gridSz) { ctx.moveTo(0, i); ctx.lineTo(w, i); }
+            ctx.stroke();
+
+            // Draw Extraction Zone
+            ctx.save();
+            ctx.translate(extraction.x, extraction.y);
+            ctx.rotate(performance.now() * 0.001);
+            ctx.strokeStyle = 'rgba(0, 255, 102, 0.4)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 15]);
+            ctx.beginPath();
+            ctx.arc(0, 0, extraction.r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(0, 0, extraction.r - 10, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+
+            // Draw Lasers
+            ctx.save();
+            ctx.lineCap = 'round';
+            ctx.globalCompositeOperation = 'screen';
+            lasers.forEach(l => {
+                const lx = l.cx + Math.cos(l.angle) * l.length;
+                const ly = l.cy + Math.sin(l.angle) * l.length;
+                
+                // Hub
+                ctx.fillStyle = '#111';
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([]);
+                ctx.beginPath(); ctx.arc(l.cx, l.cy, 10, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+
+                // Beam
+                ctx.beginPath();
+                ctx.moveTo(l.cx, l.cy);
+                ctx.lineTo(lx, ly);
+                ctx.lineWidth = 4;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#FFF';
+                ctx.stroke();
+            });
+            ctx.restore();
+
+            // Draw Particles
+            ctx.save();
+            ctx.fillStyle = 'var(--neon-cyan)';
+            ctx.globalCompositeOperation = 'screen';
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI*2); ctx.fill();
+            });
+            ctx.restore();
+
+            // Draw Artifact
+            ctx.save();
+            ctx.translate(artifact.x, artifact.y);
+            if (artifact.isDragging) {
+                ctx.scale(1.2, 1.2);
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = alarm > 75 ? 'var(--neon-red)' : 'var(--neon-cyan)';
+            }
+            
+            // Icosahedron/Diamond Shape
+            ctx.beginPath();
+            ctx.moveTo(0, -artifact.r);
+            ctx.lineTo(artifact.r, 0);
+            ctx.lineTo(0, artifact.r);
+            ctx.lineTo(-artifact.r, 0);
+            ctx.closePath();
+            
+            ctx.fillStyle = alarm > 75 ? 'rgba(255, 0, 60, 0.8)' : 'rgba(0, 243, 255, 0.8)';
+            ctx.fill();
+            ctx.strokeStyle = '#FFF';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Inner detail
+            ctx.beginPath();
+            ctx.moveTo(0, -artifact.r); ctx.lineTo(0, artifact.r);
+            ctx.moveTo(-artifact.r, 0); ctx.lineTo(artifact.r, 0);
+            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+            ctx.stroke();
+            ctx.restore();
+            
+            // Draw Danger Vignette if high alarm
+            if (alarm > 50) {
+                const alpha = (alarm - 50) / 100;
+                const grad = ctx.createRadialGradient(w/2, h/2, h*0.2, w/2, h/2, h);
+                grad.addColorStop(0, 'rgba(255,0,0,0)');
+                grad.addColorStop(1, `rgba(255,0,60,${alpha})`);
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, w, h);
+            }
+        }
+
+        function loop(time) {
+            const dt = time - lastTime;
+            lastTime = time;
+            
+            if (state === 'PLAYING') {
+                update(dt);
+            }
+            draw();
+            reqId = requestAnimationFrame(loop);
+        }
+
+        // Button Binding
+        document.getElementById('start-btn').addEventListener('click', startGame);
+        document.getElementById('restart-btn').addEventListener('click', startGame);
+
+        // Render initial background before game starts
+        draw();
+
+    </script>
+</body>
+</html>
